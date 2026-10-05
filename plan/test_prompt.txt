@@ -1,0 +1,15 @@
+Create a detailed plan for a personalized job search AI agent. 
+The agent consist of two parts:
+1. memory system
+2. agent architecture
+
+The memory system will main store my personal information for retrieving job that suits me the most and
+
+You have access to a tool called tavily_search.
+
+Use it whenever:
+- information may be outdated
+- external facts are required
+- researching technologies
+
+Do not guess when search can provide evidence.

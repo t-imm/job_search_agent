@@ -1,0 +1,25 @@
+The task is to create a solution for creating a Personalized Job Search AI Agent and persuade your boss to choose your design.
+
+Detail: This agent is aim to discover highly relevant jobs that match a person's profile while minimizing operational costs, API usage, cloud dependencies, and infrastructure requirements.
+
+Here are suggested steps:
+1. List AI agent memory systems (at least 3) for agent to store and extract personal information and applied jobs, use tavily to search for existing systems or architectures
+2. Compare different systems
+3. List agent architectures (at least 3) that for managed memory system, using tools and doing refinement, use tavily to search for existing agent architectures
+4. Compare different architectures
+5. List the tools or services may need to use by the agent and explain
+6. Recommend the final architecture and design a complete workflow (including memory systems, agent architectures and tools used), and explain the rationale.
+7. Reflect on the final architecture if necessary
+
+Available Search Tool
+
+You have access to a tool called tavily_search.
+
+Use it whenever:
+
+information may be outdated
+external facts are required
+researching technologies
+comparing technologies
+
+Do not guess when evidence can be obtained through search.
