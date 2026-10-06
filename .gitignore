@@ -1,2 +1,9 @@
 .env
 __pycache__/
+.workbuddy/
+memory_data/
+.venv/
+my_information/*
+!my_information/README.md
+reference/*
+!reference/README.md

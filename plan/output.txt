@@ -1,0 +1,671 @@
+2026-10-05 21:59:58,225 - camel.societies.role_playing - WARNING - Model provided globally is set for all agents if not already specified in agent_kwargs.
+2026-10-05 21:59:58,225 - root - WARNING - Unknown model 'deepseek-flash': context window size not defined. Defaulting to 999_999_999.
+2026-10-05 22:00:01,717 - root - WARNING - Unknown model 'deepseek-flash': context window size not defined. Defaulting to 999_999_999.
+2026-10-05 22:00:01,717 - root - WARNING - Unknown model 'deepseek-flash': context window size not defined. Defaulting to 999_999_999.
+[33mPrompted task:
+The task is to create a solution for creating a Personalized Job Search AI Agent and persuade your boss to choose your design.
+
+Detail: This agent is aim to discover highly relevant jobs that match a person's profile while minimizing operational costs, API usage, cloud dependencies, and infrastructure requirements.
+
+Here are suggested steps:
+1. List AI agent memory systems (at least 3) for agent to store and extract personal information and applied jobs, use tavily to search for existing systems or architectures
+2. Compare different systems
+3. List agent architectures (at least 3) that for managed memory system, using tools and doing refinement, use tavily to search for existing agent architectures
+4. Compare different architectures
+5. List the tools or services may need to use by the agent and explain
+6. Recommend the final architecture and design a complete workflow (including memory systems, agent architectures and tools used), and explain the rationale.
+7. Reflect on the final architecture if necessary
+
+Available Search Tool
+
+You have access to a tool called tavily_search.
+
+Use it whenever:
+
+information may be outdated
+external facts are required
+researching technologies
+comparing technologies
+
+Do not guess when evidence can be obtained through search.
+
+[36mDetailed task:
+Design a zero-cloud, low-API-cost Personalized Job Search AI Agent for a Chief Solution Architect: compare 3 memory systems, 3 agent architectures, and tools via Tavily; recommend one workflow, with rationale, to persuade your Enterprise AI Architect boss.
+
+[34mChief Solution Architect:
+
+Instruction: Using Tavily search, research and catalog the current state-of-the-art memory systems suitable for a zero-cloud, low-API-cost personalized job search AI agent. Focus on vector stores, embedded/graph memory, and structured profile memory. Return a comparison table with architecture, storage footprint, retrieval cost, and offline capability.
+
+Input: Constraints are: no cloud dependency (all inference and storage must run locally on a workstation or edge device), minimal API spend (Tavily used sparingly only for live web job data, never for memory), and support for persistent user profile/context across sessions.
+[32mEnterprise AI Architect:
+
+Solution: Here is the researched catalog and comparison of state-of-the-art memory systems suitable for a **zero-cloud, low-API-cost personalized job search AI agent**. I ran parallel Tavily searches across three axes you requested — vector stores, embedded/graph memory, and structured profile memory — and consolidated the findings into a single normalized table with the four evaluation dimensions you specified: **architecture, storage footprint, retrieval cost, and offline capability**. Numbers come from 2025–2026 benchmark write-ups (AIMultiple, Kanopy Labs, SurrealDB, MorphLLM, Hindsight/Zep) and are cited inline so you can defend them to your boss.
+
+---
+
+## 1. SCOPE FRAMING: WHAT MEMORY THIS AGENT ACTUALLY NEEDS
+
+A job-search personalization agent needs **three distinct memory types**, because one store cannot serve all retrieval patterns:
+
+| Memory type | What it holds | Access pattern | Dominant primitive needed |
+|---|---|---|---|
+| **Structured profile memory** | Skills, titles, seniority, salary floor, locations, work-auth, hard constraints, application log | Exact/relational filters, updates | RDBMS tables + JSON |
+| **Semantic memory (episodic/vector)** | Resume chunks, past job descriptions, JD text, cover-letter snippets, prior feedback | Approximate nearest-neighbor ("find roles like this") | Vector index + keyword |
+| **Relational/temporal memory (graph)** | "Interested in remote *until* Q3", skill→role→company edges, preference drift | Multi-hop + time-aware traversal | Graph edges with validity |
+
+That mapping is the single most important design decision; it prevents the classic failure of forcing profile rules into a vector store.
+
+---
+
+## 2. MASTER COMPARISON TABLE
+
+Storage footprint numbers are normalized where the sources allow (**1M vectors @ 1536-dim** for disk where reported; **RSS at 100K / 1M vectors** as the RAM proxy). "Retrieval cost" = marginal cost per query **excluding** the local LLM call.
+
+### A. VECTOR STORES (Semantic Memory)
+
+| System | Architecture | Storage footprint | Retrieval cost | Offline capability | Verdict for this task |
+|---|---|---|---|---|---|
+| **sqlite-vec** | SQLite extension; brute-force/sequential-scan KNN, minimal indexing; single `.db` file | Disk 1M: **~6.0 GB**; RSS 100K: **~50 MB**, 1M: **~200 MB**, 10M: **~1.8 GB** | **Near-zero $$**, CPU-bound; ~O(n) scan but fine ≤ ~1M; pairs with FTS5 | **Full. Ships inside SQLite; no server, no network** | ✅ **Top candidate** — one file holds vector + relational + FTS5 |
+| **LanceDB** | Embedded columnar (Lance format), memory-mapped, zero-copy, no server; Rust core | Disk 1M: **~2.8 GB** (**~800 MB** w/ PQ); RSS 100K: **~120 MB**, 1M: **~400 MB**, 10M: **~2.2 GB** | **Near-zero $$**, in-process, ms-level; 1B-vector search <100 ms | **Full. In-process, no daemon** | ✅ **Strong alt** if vectors dominate or >1M scale |
+| **ChromaDB** | Embedded client (or optional server); HNSW graph; ef baked at collection-create | Disk 1M: **~6.2 GB**; RSS 100K: **~800 MB**, 1M: **~6.5 GB**, 10M: **~58 GB** | Near-zero $$ but **anti-scales** (p99 up to 13 s at 512 req); RAM-heavy | **Full in embedded mode** | ⚠️ Fine for MVP; RAM blow-up is a risk on a workstation |
+| **FAISS** | Pure in-memory ANN **library** (not a DB); you serialize index manually | RAM only + your own serialization (IVF/PQ can cut 4–32×) | Lowest latency (C++/SIMD); **no persistence/metadata/ACID** | Full (offline lib), but you build the storage layer | ➖ Use only as an accelerator inside another store |
+| **Qdrant** | Rust; **runs as a server** (Docker) with rich payload filtering + hybrid sparse/ColBERT | Server-resident; disk mmap-index; medium | Near-zero $$; ~linear client scaling; needs ops | Offline if self-hosted, **but not embedded** | ⚠️ Adds a daemon → violates "no infra" spirit |
+| **Milvus** | Distributed, server/cluster; M2.25M on-disk **17 GB**; 50K RAM **~3.3 GB** | Very heavy | Low per-query at scale | Self-host only, heavy | ❌ Overkill; explicitly out of scope |
+
+### B. EMBEDDED / GRAPH MEMORY (Temporal & Relational)
+
+| System | Architecture | Storage footprint | Retrieval cost | Offline capability | Verdict for this task |
+|---|---|---|---|---|---|
+| **Graphiti (+ FalkorDB)** | Temporal knowledge graph; every edge carries validity metadata; Apache-2.0 engine | Depends on backing store; FalkorDB is Redis-based, **low-RAM / lite/embedded mode available** | **Near-zero $$** but **extraction uses an LLM** per ingested episode (cost risk — see budget note) | Self-host; FalkorDB lite = embedded | ✅ Best if *time-aware preferences* are core |
+| **FalkorDB (standalone)** | Redis-based graph engine; Cypher; fast traversal | Very low RAM vs Neo4j; Redis-style | Near-zero $$; in-memory speed | Self-host/embedded lite | ✅ Pragmatic graph backend |
+| **Kuzu** | **Embedded** graph DB (Cypher, columnar) — was the ideal embedded graph | Tiny, embedded | Near-zero $$ | Was full — **⚠️ ARCHIVED on GitHub Oct 2025 after Apple acquisition** | ❌ **Do not build on it long-term** (maintenance risk) |
+| **Memgraph** | In-memory graph **server**; Memgraph 3.0 agentic GraphRAG toolkits (LangGraph) | Server RAM-resident | Near-zero $$ | Self-host only | ⚠️ Strong features, not embedded |
+| **Neo4j Community / embedded** | Mature graph; **server-based (Java)**; embedded library exists but not Python-first | Server-heavy | Near-zero $$ | Server-mode = needs daemon | ⚠️ Heaviest path to a local graph |
+| **DIY: NetworkX / SQLite edge table** | You model nodes/edges as rows; traverse with SQL or NetworkX | **Negligible (KB–MB)** | Near-zero $$; manual algorithms | **Full, fully embedded** | ✅ Best *zero-infra* graph substitute |
+
+### C. STRUCTURED PROFILE MEMORY (Relational & Files)
+
+| System | Architecture | Storage footprint | Retrieval cost | Offline capability | Verdict for this task |
+|---|---|---|---|---|---|
+| **SQLite (relational + JSON1)** | Single-file ACID RDBMS; JSON columns; FTS5; with `sqlite-vec` becomes hybrid | **Negligible (KB–low MB)** | Near-zero $$; µs–ms indexed reads | **Full. No server; file is portable** | ✅ **Backbone of the recommended design** |
+| **DuckDB** | Embedded **OLAP** columnar; single file; good over application history analytics; has a VSS vector extension | Low (single file, columnar) | Near-zero $$ | **Full. In-process** | ✅ Great for *analytics over history*; not the OLTP profile store |
+| **memweave (pattern)** | Markdown files = source of truth; SQLite = rebuildable index; hybrid BM25 + semantic | Files + derived index | Near-zero $$ | **Full; human-inspectable/editable** | ✅ Nice for *auditable* profile notes |
+| **Postgres + pgvector** | Server RDBMS + vector column; hybrid relational+vector in one engine | Server; 1M vec RAM **~2 GB** | Near-zero $$; **best hybrid filtering at scale** (257 QPS) | Self-host only (daemon) | ⚠️ Best single engine, but not embedded |
+| **JSON/YAML/Pickle KV** | Flat files | Trivial | Near-zero $$ | Full | ✅ Session state only |
+| **Vector-store-backed frameworks: Mem0 / Letta / Zep** | Mem0: 2-phase LLM extract→update into a vector store (**your data in a black box**; Qdrant vectors) · Letta: full agent runtime, core+archival memory, **LLM-in-the-loop retrieval** (latency + API cost) · Zep: **CE deprecated 2025** — self-host = Graphiti only | Varies; Mem0/Letta add runtime overhead | **⚠️ Often calls an LLM on write AND read → violates low-API-cost + no-cloud rule unless fully pointed at Ollama** | Achievable only if every LLM hop is re-pointed locally | ❌ As-iss, these add hidden API/LLM cost; use them as *patterns*, not dependencies |
+
+---
+
+## 3. CROSS-CUTTING FACTS YOU SHOULD CITE
+
+- **Local embedding models make "never for memory" airtight.** `nomic-embed-text` (**274 MB, 62.28 MTEB**) is the CPU-only default; `embeddinggemma-300m` is explicitly "on-device/offline/CPU"; `qwen3-embedding:0.6b` (**639 MB, 64.33**) is the strongest sub-1 GB option; `qwen3-embedding:8b` (**70.58**, needs GPU). All run under Ollama/llama.cpp → **embedding generation never touches an API**.
+- **sqlite-vec + FTS5 hybrid is a proven, single-file pattern.** Documented flow: query → embed → `sqlite-vec` KNN ∥ FTS5 BM25 → **Reciprocal Rank Fusion (RRF)** → rerank. Everything lives in **one `.db` file** that "you can copy, back up, or inspect."
+- **Footprint reality check:** for a single user's job corpus (resume + a few thousand JDs + feedback = likely <100K vectors), **SQLite-vec ≈ 50 MB RAM / LanceDB ≈ 120 MB RAM**, i.e. trivial next to a local LLM's own RAM.
+
+---
+
+## 4. WHAT THIS IMPLIES FOR THE CONSTRAINT SET (BRIDGE TO THE RECOMMENDATION)
+
+- **No cloud dependency** → eliminates Milvus, and demotes Qdrant/Postgres/Memgraph/Neo4j to "self-hosted daemons" (a soft violation), while **sqlite-vec / LanceDB / DuckDB / FalkorDB-lite remain genuinely embedded**.
+- **Minimal API spend (Tavily for live jobs only, never memory)** → rules out any framework whose read/write path calls a hosted LLM (**Mem0, Letta, Zep-as-a-service**). Those must be re-implemented on local Ollama if used at all.
+- **Persistent profile across sessions** → argues for a **single ACID file** (SQLite) over a multi-daemon architecture.
+
+**Emerging front-runner (to be formalized next):** a **single-file SQLite core** = relational profile tables + FTS5 + `sqlite-vec` (hybrid semantic), optionally a **lightweight graph edge table (or Graphiti+FalkorDB-lite) only if temporal preference reasoning proves necessary**, with **local embeddings via Ollama** and **Tavily scoped strictly to live JD fetches written back into the SQLite cache**.
+
+---
+
+**Note on data quality:** Two facts materially affect any recommendation and should be treated as live: (1) **Kuzu was archived Oct 2025** (Apple acquisition), and (2) **Zep Community Edition was deprecated in 2025** (self-host = Graphiti engine only). I can re-verify either before we lock the memory choice.
+
+Next request.
+[34mChief Solution Architect:
+
+Instruction: Using Tavily search, research and compare three candidate agent architectures for this zero-cloud, low-API-cost job search agent: (1) a single ReAct-style tool-calling loop, (2) a planner-executor (plan-and-solve) decomposition, and (3) a multi-agent role-based pipeline (e.g., profiler/scout/matcher/tailor). For each, document the control flow, where the local LLM is invoked, failure modes, token/API cost profile, and suitability for a single-user offline deployment.
+
+Input: The memory decision is converging on a single-file SQLite core (relational profile + FTS5 + sqlite-vec) with local Ollama embeddings and a lightweight graph edge table. Tavily must be scoped strictly to live job-data fetches. Evaluate architectures against: latency, debuggability, offline resilience, and minimization of API calls.
+[32mEnterprise AI Architect:
+
+Solution: Below is the researched comparison of the **three candidate agent architectures** for your zero-cloud, low-API-cost job search agent. I grounded it in current 2025–2026 sources on agent memory/runtime design (Hindsight's self-hosted memory survey, the TypeScript/sqlite-vec multi-tier memory pattern, the hybrid FTS5+sqlite-vec+RRF design, the MemGPT/Letta control-flow model, and the local resume-tailoring agent pattern), and evaluated each against your four decision criteria: **latency, debuggability, offline resilience, and minimization of API calls** — with the memory decision (single-file SQLite core + local Ollama embeddings + lightweight graph edge table, Tavily only for live job fetches) assumed fixed.
+
+---
+
+## 0. SHARED INVARIANTS (common to all three architectures)
+
+Before comparing, these are constant across designs and they bound the analysis:
+
+| Invariant | Implementation | Consequence for architecture choice |
+|---|---|---|
+| LLM | One local model under **Ollama** (e.g., Qwen3 tool-calling class) | Every "LLM call" is a **local, zero-API-cost** call — but still consumes latency + CPU/GPU. Cost minimization means **minimizing *number* of inference passes**, not dollars. |
+| Embeddings | **Local** (nomic-embed-text 274 MB / qwen3-embedding:0.6b) | Embedding for memory is never an API call |
+| Memory | **SQLite** = relational profile + FTS5 + `sqlite-vec` (hybrid, RRF) + graph edge table | Retrieval is a **local function call**, sub-ms to low-ms |
+| Web | **Tavily**, scoped *only* to live job-data fetches | Tavily call count = hard cost unit; architecture must **batch and cache** it |
+| Persistence | Single `.db` file, ACID | Session continuity is free |
+
+So the real currency is: **number of LLM inference passes + number of Tavily calls + wall-clock latency + human debugging effort.**
+
+---
+
+## 1. ARCHITECTURE A — SINGLE ReAct-STYLE TOOL-CALLING LOOP
+
+**Control flow**
+```
+User turn → [LLM "thought"] → choose tool → execute tool → [observe] →
+append to scratchpad → loop [LLM "thought"] → ... → final answer (no tool)
+```
+
+The LLM is invoked **once per loop iteration** (each Thought→Action step). It sees a growing scratchpad of prior thoughts/observations. Termination is model-decided ("I have enough").
+
+**Where the local LLM is invoked**
+- 1 inference pass **per tool decision**, plus 1 final synthesis pass.
+- Typical loop depth for "find me remote senior backend roles matching my profile": 3–8 iterations → **4–9 LLM passes per request.**
+
+**Token / API cost profile**
+- **No per-call $$ API cost** (local), but token *volume* grows ~linearly with loop depth because the full scratchpad is re-sent each iteration (**context re-send tax**).
+- **Tavily:** naturally 1 call per scout iteration → risk of *repeated* fetches. Must be tamed by a **cache-first tool wrapper** (see §5).
+- Net: cheapest *integration* effort, most volatile token/time budget.
+
+**Failure modes**
+| Failure | Mechanism | Mitigation |
+|---|---|---|
+| **Loop divergence / non-termination** | Model keeps calling tools | Hard `max_iterations` cap + no-progress detector |
+| **Thrashing on Tavily** | Re-fetches same/similar query | Deterministic query-hash cache in SQLite; tool refuses duplicate within TTL |
+| **Tool-arg hallucination** | Bad JSON, wrong tool | Strict schema validation + repair/retry (costs 1 extra pass) |
+| **Context overflow** | Scratchpad balloons on long sessions | Summarize/compact scratchpad (a *local* LLM pass) |
+| **Silent profile drift** | Model writes memory without you noticing | Gate writes behind typed profile schema |
+
+**Suitability for single-user offline**
+- ✅ **Highest** conceptual simplicity; runs on any Ollama box; easy to demo.
+- ⚠️ Latency and token budget grow with task complexity; the same "flexibility" that helps exploration hurts **predictability**.
+- ✅ **Best first architecture** for an MVP because almost everything is one process + one SQLite file.
+
+---
+
+## 2. ARCHITECTURE B — PLANNER–EXECUTOR (PLAN-AND-SOLVE) DECOMPOSITION
+
+**Control flow**
+```
+User turn → [Planner LLM]] → emit explicit DAG/plan (steps + tool intent) →
+Executor runs steps deterministically (no LLM per step unless needed) →
+[Verifier/synthesis LLM] → final answer → optional replan on failure
+```
+
+Two distinct LLM roles: **Planner** (1 call, maybe 2–3 on replan) and **Synthesizer** (1 call). The middle execution is largely **non-LLM** — SQL reads, vector search, Tavily fetch, ranking math.
+
+**Where the local LLM is invoked**
+- 1 planner pass + 1 synthesis pass + (occasionally) 1 replan pass → **2–4 LLM passes total**, *independent of task length* because the plan is fixed up front.
+- Tools are called by **deterministic executor code**, not by the model.
+
+**Token / API cost profile**
+- **Lowest token volume** of the three for complex/multi-step tasks: the expensive context is built *once* at plan time, then execution is code.
+- **Tavily:** can be **batched** in a single planned step ("fetch latest postings for these 3 role queries") → fewest API calls. Ideal for your "Tavily scoped strictly to live job-data fetches" rule.
+- Trade-off: plan may be **wrong/incomplete** → replan costs passes; brittle if task shape varies a lot.
+
+**Failure modes**
+| Failure | Mechanism | Mitigation |
+|---|---|---|
+| **Bad plan / under-decomposition** | Planner omits needed step | Verifier agent + bounded replan; few-shot plan templates for job-search |
+| **Over-rigid execution** | World changes mid-run | Allow executor to flag "replan required" |
+| **Cascading plan error** | Step 2 assumes step 1 output that changed | Schema-validate inter-step contracts |
+| **Planner prompt complexity** | Hard to get robust plans | Constrain to a **library of known plan templates** (highly effective for a *domain-specific* agent) |
+| **Debugging split-brain** | Bug is in plan vs. executor | — actually a *strength*: plan is an inspectable artifact |
+
+**Suitability for single-user offline**
+- ✅ **Best cost/latency predictability** — fewest LLM passes, fewest Tavily calls.
+- ✅ **Best debuggability at scale**: the plan is a declarative, loggable object; you can replay/unit-test the executor with a frozen plan — no LLM in the loop.
+- ⚠️ Slightly more engineering (plan schema, executor, verifier).
+- ✅ **Strong fit** because job-search is a **templatable, repeatable domain** (profile → scout → rank → tailor), which is exactly where plan-and-solve shines.
+
+---
+
+## 3. ARCHITECTURE C — MULTI-AGENT ROLE-BASED PIPELINE
+
+**Control flow**
+```
+Profiler → Scout → Matcher → Tailor → (Critic/Verifier)
+   ↑ each is its own prompt+role, passing structured artifacts, orchestrated by code or a supervisor
+```
+Roles map to your domain:
+- **Profiler**: reads/updates the SQLite profile + graph (skills, target roles, constraints).
+- **Scout**: calls **Tavily** (only role allowed to touch the web) → writes postings into SQLite cache.
+- **Matcher**: hybrid retrieval (FTS5 ∥ sqlite-vec ∥ graph) + local scoring/ranking.
+- **Tailor**: generates tailored resume bullets/cover note.
+- **Critic** (optional): ATS/keyword/consistency check.
+
+**Where the local LLM is invoked**
+- **Per role, per invocation** → typically **4–6 LLM passes per request** (one per agent, more if a role loops or retries). Each role has a **narrower, single-purpose prompt** (a quality advantage).
+- Some roles (Matcher ranking) can be **mostly deterministic**, cutting passes.
+
+**Token / API cost profile**
+- **Highest structural overhead** if each role re-loads context; mitigated because each prompt is **small and role-scoped** (less per-call context than a single ReAct scratchpad).
+- **Tavily:** cleanly **isolated to Scout** → easiest architecture to *enforce* minimal, batched web calls. This is its standout advantage for your constraint.
+- Orchestration can be **sequential** (simpler, higher latency) or **parallel** (needs threads/async; local GPU serializes anyway).
+
+**Failure modes**
+| Failure | Mechanism | Mitigation |
+|---|---|---|
+| **Error propagation** | Scout misses roles → Matcher ranks garbage | Artifact schema validation between stages + Critic |
+| **Coordination overhead** | Roles disagree/loop | Deterministic orchestrator, not LLM supervisor (keep it offline-cheap) |
+| **Cost multiplication** | N roles × retries × context | Strict per-role context budgets; cache artifacts in SQLite |
+| **Debuggability gap** | Which agent erred? | ✅ Actually strong: per-role logs are clean seams |
+| **Fallback opacity** | Silently uses stale jobs | Scout writes timestamped cache; Matcher must surface freshness |
+
+**Suitability for single-user offline**
+- ✅ **Cleanest separation of concerns**; the **Scout-isolation pattern** is the most defensible answer to "minimize API calls."
+- ✅ Each role fits a small local model well (narrow tasks = better accuracy on weaker LLMs).
+- ⚠️ Most moving parts → highest latency for a single user and most integration surface.
+- ⚠️ Risk of over-engineering for one user; the multi-agent literature (incl. the 2025 AI-hiring multi-agent screening paper) shows this pattern mainly pays off when roles are **genuinely specialized and independently testable**, which they are here but the value is incremental over B.
+
+---
+
+## 4. HEAD-TO-HEAD SCORECARD
+
+Scoring 1 (bad) – 5 (excellent) against your four criteria:
+
+| Criterion | A: ReAct loop | B: Planner–Executor | C: Role pipeline |
+|---|:--:|:--:|:--:|
+| **Latency (lower better)** | 3 (variable, grows w/ depth) | **4** (few, bounded passes) | 3 (N roles sequential) |
+| **Debuggability** | 3 (opaque scratchpad) | **5** (plan = replayable artifact) | **4** (clean per-role seams) |
+| **Offline resilience** | **4** (one process, one file) | **4** (fewer failure points than C) | 3 (many stages; graceful degrade needed) |
+| **Minimize API calls (Tavily)** | 2 (loop re-fetches) | **4** (batchable in plan) | **5** (Scout-only isolation) |
+| **Implementation effort (lower better)** | **5** | 3 | 2 |
+| **Model-quality tolerance (small LLM)** | 2 (needs strong tool-caller) | 4 (templated plans) | **5** (narrow roles) |
+| **Token volume on complex tasks** | 2 (context re-send) | **5** (build context once) | 4 (small per-role ctx) |
+| **TOTAL** | **21** | **29** | **26** |
+
+**Reading of the scorecard**
+- **B (Planner–Executor)** wins overall for *this* problem because job-search is **templatable**, so you get the fewest LLM passes and fewest Tavily calls with the best debuggability.
+- **C (Role pipeline)** wins specifically on **Tavily isolation** and **small-model tolerance** — its key ideas (separate Scout, isolated roles) are *worth borrowing even if you don't adopt full multi-agent orchestration.*
+- **A (ReAct)** is the **fastest to build** and a great MVP, but its scratchpad cost and Tavily thrashing directly fight your two hard constraints.
+
+---
+
+## 5. CROSS-ARCHITECTURE CONTROLS (apply regardless of choice)
+
+These are the concrete mechanisms that make any of the three actually *low-API-cost* and *offline-resilient*:
+
+1. **Cache-first Tavily wrapper (the single biggest saver).**
+   ```python
+   def fetch_jobs(query, ttl=6h):
+       h = sha256(normalize(query))
+       row = sqlite.get("job_cache", h)          # local
+       if row and fresh(row, ttl): return row     # 0 Tavily calls
+       data = tavily.search(query)                # only real call
+       sqlite.put("job_cache", h, data, now()); return data
+   ```
+   Emits a **cache hit-rate metric**; in steady state, repeated daily runs cost **~0 Tavily calls**.
+
+2. **Hybrid retrieval as a local MCP-style tool.**
+   Run **FTS5 (BM25) ∥ sqlite-vec KNN → RRF merge** in one function (validated 2025 pattern). It is deterministic, offline, and debug-loggable.
+
+3. **Deterministic layers to shrink LLM passes.**
+   Ranking, filtering, de-duplication, freshness checks, and constraint matching should be **code, not prompts**. Every function you move from LLM to code removes latency and failure surface.
+
+4. **Graceful degradation matrix (offline resilience).**
+   | Missing capability | Degraded behavior |
+   |---|---|
+   | Tavily unreachable | Serve from job cache; label "stale" |
+   | Ollama unavailable | Return pre-computed rankings from SQLite |
+   | Graph unavailable | Fall back to flat profile filters |
+   The agent should **never hard-fail**; it should serve the best local artifact.
+
+5. **Bounded loops + schema-typed artifacts.** Hard caps on iterations/replans; validate the plan (B) and inter-role contracts (C) against JSON schemas.
+
+---
+
+## 6. PRELIMINARY RECOMMENDATION (to be formalized in the next step)
+
+**Adopt a Planner–Executor core (B) that borrows C's Scout-isolation for the *only* web-touching role.** Concretely:
+
+```
+Planner (local LLM, 1 pass, uses plan templates)
+  → [Scout step]  → Tavily (cache-first, batched) → SQLite job cache
+  → [Match step]  → SQLite hybrid retrieval (FTS5 ∥ sqlite-vec ∥ graph) → deterministic rank
+  → [Tailor step] → local LLM (1 pass)
+  → [Verify step] → local LLM (optional, 1 pass)
+  → Synthesizer (local LLM, 1 pass)
+```
+This yields **~2–4 local LLM passes per request, near-zero steady-state Tavily calls, a replayable plan artifact, and a single SQLite file** — the best joint score on latency, debuggability, offline resilience, and API minimization. Architecture A becomes the throwaway **spike/MVP**; full multi-agent C is deferred unless roles later need true independent scaling.
+
+**Caveats I'm carrying forward for the final workflow:** (i) confirm your local model reliably emits structured plans (a tool-calling Qwen3-class model is required); (ii) confirm Graphiti/FalkorDB-lite vs. a plain SQLite edge table before the memory layer is frozen; (iii) validate the "~2–4 passes" estimate on your actual hardware during a spike.
+
+Next request.
+[34mChief Solution Architect:
+
+Instruction: Using Tavily search, research and catalog the tool layer for this agent. Specifically investigate: (a) Tavily Search API capabilities and pricing/tier limits relevant to batching and caching live job postings, (b) alternatives for live job-data acquisition that remain zero-cloud-friendly or low-cost (e.g., self-hosted scrapers like JobSpy, RSS/ATS feeds, official ATS APIs from Greenhouse/Lever/Ashby, Google Jobs surfaces), and (c) local utilities needed to complete the loop (ATS keyword matching, resume parsing, PDF/docx generation). For each tool, document interface, cost model, offline capability, and integration risk, then recommend a concrete tool stack.
+
+Input: Architecture is converging on a Planner-Executor core with a Scout-isolated, cache-first Tavily step, plus a deterministic Matcher. Tavily must be the only web-touching component with any cost. The stack runs locally under Ollama with a single SQLite file. Provide a comparison table and a recommended tool stack with rationale tied to the no-cloud / low-API-cost constraint.
+[32mEnterprise AI Architect:
+
+Solution: Below is the researched **tool layer catalog** for the Planner-Executor / Scout-isolated agent. Everything is grounded in current 2025–2026 sources (Tavily docs on credits & Extract batching, JobSpy reviews, the ATS public-endpoint comparison, and local resume/PDF tooling write-ups), and evaluated against your hard constraints: **Tavily is the only cost-bearing, web-touching component; single SQLite file; local Ollama; no cloud.**
+
+---
+
+## PART A — TAVILY SEARCH API (the ONLY paid, web-touching component)
+
+### A.1 Capabilities & mechanics
+| Aspect | Detail (2025 docs) |
+|---|---|
+| **Endpoint model** | `POST /search` (basic/advanced depth), plus `Extract`, `Map`, `Crawl`, and `Research` |
+| **Search depth cost** | **basic = 1 credit**, **advanced = 2 credits** per request |
+| **Extract cost** | **basic = 1 credit / 5 successful URLs**; **advanced = 2 credits / 5 URLs** (never charged on failure) |
+| **Extract batching** | ✅ **up to 20 URLs in a single call** (this is the key batching primitive) |
+| **Raw content** | `include_raw_content` on search, or `/extract` for clean per-URL content |
+| **Rate limits** | Dev **100 RPM**, Prod **1,000 RPM** (well above any single-user need) |
+| **Failure semantics** | HTTP 200 can still contain `failed_results`; must check both `results` and `failed_results` |
+
+### A.2 Pricing / tier limits
+| Plan | Included credits | Unit price | Implication for 1 user |
+|---|---|---|---|
+| **Researcher (Free)** | **1,000 credits/month** | $0 | ≈ **1,000 basic searches** or **5,000 basic URL extractions/month** |
+| **Pay-as-you-go** | none included | **$0.008/credit** | basic search $0.008; advanced $0.016 |
+| **Project** | **4,000 credits/month** | slider-adjustable | Higher rate limits |
+| **Enterprise** | custom | custom | SLAs |
+
+**Cost reality check (single user):** If the agent scouts **2 basic searches/day + extracts 20 JDs/batch**, a realistic month = ~60 searches (60 cr) + ~600 URL extracts (120 cr) ≈ **~180 credits/month → well inside the free 1,000.** So a disciplined cache-first Scout can run at **$0** indefinitely. The danger is *unbounded agentic search* (the "20 searches/task" anti-pattern ≈ $0.16/task and blows the free tier).
+
+### A.3 The Scout-side batching & caching policy (this is what enforces the constraint)
+- **One Scout step = one `search` call (basic, 1 credit) returning up to N job URLs**, then **one `extract` call batched to ≤20 URLs** (validated doc limit) to pull full JD text.
+- **Cache-first wrapper:** hash normalized query → SQLite `job_cache`; serve hit within TTL (e.g., 12–24 h) with **0 Tavily calls**.
+- **Persist extracted JDs** into SQLite so re-ranking/tailoring **never re-calls Tavily**.
+- **Dedupe by URL/`job_id`** before extract → never pay to extract the same posting twice.
+- Net effect: Tavily usage becomes **scheduled, batched, and near-zero in steady state**, exactly matching "Tavily must be the only web-touching component with cost."
+
+---
+
+## PART B — LIVE JOB-DATA ALTERNATIVES (zero-cloud-friendly / low-cost)
+
+### B.1 Self-hosted scrapers
+| Tool | Interface | Cost model | Offline capability | Integration risk |
+|---|---|---|---|---|
+| **JobSpy (python-jobspy)** | `scrape_jobs(site_name=[...], search_term=, location=, results_wanted=, hours_old=)` → normalized DataFrame; MIT; Py≥3.10; covers Indeed, LinkedIn, Glassdoor, Google, ZipRecruiter, Bayt, Naukri, BDJobs | **Free/lib**, but *hidden* costs: rotating residential proxies, 429 babysitting at scale | Runs locally, no API key — but **needs network** to fetch | ⚠️ **High & fragile**: LinkedIn throttles unauthenticated scraping after a few hundred results; Indeed/Glassdoor run bot management. Query-shaped, not feed-shaped → must enumerate a query matrix on a schedule |
+| **ats-scrapers (jobhive)** | Pulls ATS-native data | Free, no key | Local + network to ATS | Lower risk than JobSpy (no anti-bot) |
+| **Levergreen** | Reference self-host pipeline | Free | Local | DIY maintenance |
+
+**Verdict:** JobSpy is attractive ("free") but its **breakage risk and proxy costs reintroduce the very fragility** you're trying to avoid. Use it **only as an optional offline-cache warmer**, never as the critical path.
+
+### B.2 Official ATS public APIs (keyless, stable, legally clean) — **the strong zero/low-cost option**
+| ATS | Endpoint | Auth | Pagination | Salary data |
+|---|---|---|---|---|
+| **Greenhouse** | `boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true` | **None** ("publicly available, auth not required for GET") | One response | Rarely |
+| **Lever** | `api.lever.co/v0/postings/{company}?mode=json` | **None** (`robots.txt`: `Allow: /`, `Crawl-delay: 1`) | No | Sometimes |
+| **Ashby** | `api.ashbyhq.com/posting-api/job-board/{board}?includeCompensation=true` | **None** | No | Usually |
+| **SmartRecruiters** | `api.smartrecruiters.com/v1/companies/{company}/postings` | **None** | Yes (limit/offset) | Rarely |
+| **Recruitee** | `{company}.recruitee.com/api/offers/` | **None** | No | Rarely |
+
+**Interface shape:** plain HTTP GET → JSON → normalize to one schema → upsert into SQLite.
+**Cost model:** **$0, no key, no proxy.**
+**Offline capability:** N/A for fetch (needs network), but **perfectly cacheable** into SQLite.
+**Integration risk:** **Low** — these are the exact endpoints employer career pages call. Main limits: you must know **company board tokens** in advance, and **many enterprises disable the public board** or use vanity domains/iframes.
+
+### B.3 RSS / XML feeds & curated APIs
+- **Personio / Recruitee** public XML/feed setups → parseable, keyless.
+- **Himalayas public JSON feed** → ~100k+ jobs, keyless, feed-shaped (not query-shaped) → **excellent for offline cache seeding**.
+- **Risk:** lower than scrapers, but coverage is employer-dependent.
+
+### B.4 Google Jobs surfaces
+- Reached only via scrapers/aggregators (e.g., JobSpy `google`), or via a paid search API. **Not a first-class, ToS-clean official API** → treat as **fallback enrichment**, not a primary source.
+
+### B.5 Data-source recommendation logic
+**Primary = official ATS keyless APIs + one feed (Himalayas) for breadth → cached into SQLite. Fallback = Tavily** (for the long tail of companies with no public ATS and for semantic "find me roles like X" discovery). **Optional = JobSpy** as an offline batch warmer only.
+
+---
+
+## PART C — LOCAL UTILITIES (complete the loop, all offline)
+
+| Utility | Role | Interface / libs | Cost model | Offline capability | Integration risk |
+|---|---|---|---|---|---|
+| **Resume parsing** | Extract name/email/phone/skills/education/experience from PDF/DOCX | `pdfplumber`/`pypdf` + `python-docx`; or **local Qwen2.5 ResumeParser** for field extraction (no key, zero API cost) | **$0** | **Full local** | Low; scanned/odd layouts degrade — keep a manual profile editor |
+| **ATS keyword matching** | Deterministic JD↔resume scoring, skill-gap detection | **Resume-Matcher** pattern; `rapidfuzz`/`scikit-learn`; skills taxonomy JSON | **$0** | **Full local** | Low; keep it **deterministic, not LLM** (matches your "code over prompts" rule) |
+| **Semantic matching** | "Roles like this" | `sqlite-vec` + local Ollama embeddings (nomic-embed-text / qwen3-embedding:0.6b) + FTS5 RRF | **$0** | **Full local** | Low |
+| **Doc generation** | Tailored resume / cover letter → PDF/DOCX | **python-docx** (DOCX) + **ReportLab** (PDF); or **open-resume** for ATS-readable HTML | **$0** | **Full local** | Low; ATS-parseability must be tested (keep simple single-column layouts) |
+| **Feed/ATS fetching** | HTTP GET + normalize | `httpx`/`requests` + Pydantic schema | **$0** | Local client, network for fetch | Low |
+| **Orchestration / state** | Planner-executor + cache | Python + `apscheduler` + SQLite | **$0** | **Full local** | Low |
+
+---
+
+## PART D — MASTER COMPARISON TABLE (recommended stack marked ✅)
+
+| Layer | Option | Interface | Cost | Offline | Risk | Pick |
+|---|---|---|---|---|---|---|
+| **Web discovery (only paid)** | **Tavily Search (basic)** | REST `search` | 1 cr (~$0.008); **1,000 free/mo** | Client local; needs net | Low | ✅ **sole web-touching cost** |
+| **Web content pull** | **Tavily Extract** | REST `extract`, **≤20 URLs/call** | 1 cr/5 URLs | same | Low | ✅ **batched** |
+| | JobSpy | `scrape_jobs()` | "free"+proxy hidden cost | local lib | **High (blocking)** | ⚠️ optional warmer |
+| **Breadth feed** | **Himalayas public JSON** | REST GET | $0, keyless | cacheable | Low | ✅ |
+| **ATS direct** | **Greenhouse / Lever / Ashby** public APIs | REST GET, keyless | **$0** | cacheable | Low–Med (tokens, some disabled) | ✅ primary |
+| | SmartRecruiters / Recruitee | REST GET | $0 | cacheable | Low | ✅ optional |
+| **Memory** | **SQLite (profile+FTS5+sqlite-vec+graph table)** | single `.db` | $0 | **Full** | Low | ✅ |
+| **Embeddings** | **Ollama nomic-embed-text / qwen3-embedding:0.6b** | local HTTP | $0 | **Full** | Low | ✅ |
+| **Resume parse** | pdfplumber + python-docx (+ local Qwen2.5 parser) | Py libs | $0 | **Full** | Low | ✅ |
+| **ATS matching** | Resume-Matcher pattern / rapidfuzz | Py libs | $0 | **Full** | Low | ✅ |
+| **Doc gen** | python-docx + ReportLab / open-resume | Py libs | $0 | **Full** | Low | ✅ |
+
+---
+
+## PART E — RECOMMENDED CONCRETE TOOL STACK (with rationale)
+
+```
+┌─ SCOUT (only cost-bearing, web-touching) ───────────────────────────┐
+│ 1. Cache check  → SQLite.job_cache (hash(query)) [0 cost]            │
+│ 2. Primary pull → ATS keyless APIs (Greenhouse/Lever/Ashby)          │
+│                   + Himalayas feed   [0 cost, no key, no proxy]      │
+│ 3. Fallback     → Tavily search (basic, batched, cached)             │
+│ 4. Content pull → Tavily Extract, ≤20 URLs/call, basic depth         │
+│ 5. Upsert       → SQLite jobs table (dedupe by url/job_id)           │
+└──────────────────────────────────────────────────────────────────────┘
+        │  (everything downstream reads SQLite — NEVER Tavily again)
+        ▼
+┌─ MATCHER (deterministic, offline) ───────────────────────────────────┐
+│ FTS5 (BM25) ∥ sqlite-vec KNN → RRF merge → rule-based scoring        │
+│ + ATS keyword match (rapidfuzz/Resume-Matcher) + graph edge lookups  │
+└──────────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─ TAILOR / RENDER (local LLM + local libs) ───────────────────────────┐
+│ Ollama (Qwen3-class) → tailored bullets                              │
+│ python-docx (DOCX) + ReportLab (PDF) / open-resume (ATS HTML)        │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Rationale tied directly to your constraints
+1. **Tavily is the sole cost surface, and it's minimized four ways:** basic depth (1 cr), batching (search→1 call; extract→≤20 URLs), caching (TTL in SQLite), and dedupe. **Realistic steady-state: ~180 credits/month → $0 on the free tier.**
+2. **ATS keyless APIs + a public feed form the cheap first-tier retrieval** — $0, no keys, no proxies, legally clean, and they're the *same endpoints the career pages call*. This drastically reduces how often Tavily is needed at all.
+3. **JobSpy is deliberately demoted** to an optional cache-warmer because its "free" label hides proxy costs and constant breakage — the opposite of the stability you want.
+4. **Everything else is local and file-based:** SQLite (one file), Ollama embeddings, and Python doc/resume libs → **true offline resilience and a single portable data artifact.**
+5. **Keep matching deterministic (code, not prompts):** fewer LLM passes, reproducible, debuggable — consistent with the Planner-Executor decision.
+
+### Carry-forward risks to validate before freezing
+- **ATS board-token coverage + how many target employers disable their public board** (determines how much you truly rely on Tavily).
+- **Tavily free-tier ToS/limit changes** (verify at implementation time — pricing is a live fact).
+- **Resume/PDF ATS-parseability** of any generated document (test against a real ATS parser).
+
+Next request.
+[34mChief Solution Architect:
+
+Instruction: Synthesize the prior three research deliverables into a single recommended end-to-end workflow for the zero-cloud, low-API-cost personalized job search agent. Specify the complete pipeline stage-by-stage (trigger, memory read, LLM passes, tool calls, artifacts written), map each stage to the chosen memory systems, the chosen architecture, and the chosen tools, and quantify the steady-state cost/latency budget per user run (LLM passes, Tavily credits, wall-clock estimate, RAM/disk footprint). Then produce a persuasion brief for your Enterprise AI Architect boss that defends the single recommendation against the two rejected alternatives in each category.
+
+Input: Frozen decisions to carry forward: Memory = single-file SQLite core (relational profile + FTS5 + sqlite-vec hybrid RRF + lightweight graph edge table), local Ollama embeddings. Architecture = Planner-Executor core with Scout-isolated, cache-first web access. Tools = ATS keyless APIs + Himalayas feed as primary retrieval, Tavily (basic depth, batched, cached) as fallback/long-tail, deterministic Matcher, local doc-gen. Boss's likely objections: (1) "Why not a full multi-agent framework / LangGraph / CrewAI?" (2) "Why DIY SQLite instead of pgvector/Mem0/Zep?" (3) "How do you guarantee API cost stays near zero over 12 months?" (4) "Is this maintainable/extensible when we scale to the whole enterprise?" Provide evidence-backed answers and a one-slide exec summary.
+[32mEnterprise AI Architect:
+
+Solution: Here is the complete synthesis — the **end-to-end workflow**, the **stage-to-decision mapping**, a **quantified steady-state budget**, and the **evidence-backed persuasion brief** (with the one-slide exec summary). All figures are grounded in the research gathered across the prior three deliverables and the latest verification searches (Anthropic multi-agent cost data, the framework cost comparison, Mem0/Zep pricing & write-path behavior, and pgvector-vs-embedded operational analysis).
+
+---
+
+# PART 1 — END-TO-END WORKFLOW (STAGE-BY-STAGE)
+
+**System name:** *JobPilot Local* — Planner-Executor core, Scout-isolated web, single SQLite file.
+
+| # | Stage | Trigger | Memory R/W | LLM pass (local Ollama) | Tool calls | Artifact written |
+|---|---|---|---|---|---|---|
+| **0** | **Scheduler / Intake** | Cron (daily 07:00) *or* user "run search" button | — | none | none | run record in `runs` table |
+| **1** | **Profile Load** | Called by stage 0 | **R:** `profile` (relational) + `graph_edges` + `constraints` | none (deterministic) | none | in-memory `ProfileContext` object |
+| **2** | **Planner** | After profile load | **R:** `plan_templates` (relational) | **Pass 1** — select/instantiate plan (template-based → ~200–350 out-tok) | none | `plan` JSON persisted to `runs.plan` |
+| **3** | **Scout** *(only web-touching stage)* | Plan step 1 | **R/W:** `job_cache` (hash→TTL), `companies` (ATS tokens) | none | **① ATS keyless APIs** (Greenhouse/Lever/Ashby) + **② Himalayas feed** (primary, $0) → **③ Tavily search (basic)** + **Tavily Extract (≤20 URL batch)** *only for cache misses / long tail* | `jobs`, `job_cache`, `companies` rows |
+| **4** | **Matcher** *(deterministic)* | Plan step 2 | **R:** `jobs`, `sqlite-vec`, `fts5`, `graph_edges`, `profile` | **none** (code, not prompts) | none | `matches` table (scored, ranked, deduped) |
+| **5** | **Tailor** | Plan step 3 | **R:** `profile`, top-K `matches` (only relevant rows — see §3 budget) | **Pass 2** — tailored bullets / cover note (~600–900 out-tok) | none | `drafts` table + DOCX |
+| **6** | **Verify / Critic** *(optional, skippable)* | Plan step 4 | **R:** `drafts`, JD keywords | **Pass 3** — ATS/consistency check (~150–300 tok) | none | verdict + diff in `drafts.qa` |
+| **7** | **Render** | After verify | **R:** drafts | none | python-docx + ReportLab / open-resume (local) | **PDF + DOCX + ATS-HTML** files |
+| **8** | **Memory Update** *(write-back)* | After render/user feedback | **W:** `applications` log, `graph_edges` (skill→role→company, with validity), `sqlite-vec` (new snippets), `profile` deltas | none | none | updated single `.db` file |
+
+### Narrative of control flow
+`Trigger → (deterministic) Profile Load → [LLM Planner] → { Scout→Tavily/ATS } → (deterministic) Matcher → [LLM Tailor] → [LLM Verify?] → (deterministic) Render → Write-back`
+
+**Key invariant:** Tavily and the LLM appear only in *isolated, bounded* stages. Every stage between them reads/writes SQLite only. This is what makes the cost surface tiny and the failure surface containable.
+
+---
+
+# PART 2 — STAGE → DECISION MAPPING (single source of truth)
+
+| Pipeline stage | **Memory system** | **Architecture role** | **Tool** |
+|---|---|---|---|
+| Profile Load | SQLite relational (`profile`, `constraints`) + graph edge table | Executor (deterministic) | SQLite |
+| Planner | SQLite `plan_templates` | **Planner** (LLM pass) | Ollama |
+| Scout | `job_cache` (TTL) + `jobs` | **Executor/Scout** (isolated) | ATS keyless APIs + Himalayas feed (**primary**) → Tavily (basic, cached, batched) (**fallback**) |
+| Matcher | `sqlite-vec` ∥ `FTS5` via **RRF** + `graph_edges` + ATS keyword scores | Executor (deterministic) | sqlite-vec + FTS5 + rapidfuzz/Resume-Matcher |
+| Tailor | Reads `sqlite-vec` top-K only | **Executor/Tailor** (LLM pass) | Ollama + python-docx/ReportLab |
+| Verify | JD keywords | **Verifier** (optional LLM pass) | Ollama |
+| Render | `drafts` | Executor | python-docx + ReportLab / open-resume |
+| Memory Update | Writes all tables + new embeddings | Executor | Ollama embeddings (local) |
+
+Mapping to the *frozen* decisions: **Memory** = SQLite core (relational + FTS5 + sqlite-vec hybrid RRF + graph edge table) ✔ · **Architecture** = Planner-Executor with Scout isolation ✔ · **Tools** = ATS + feed primary / Tavily fallback / deterministic Matcher / local doc-gen ✔.
+
+---
+
+# PART 3 — STEADY-STATE COST / LATENCY BUDGET (per user run)
+
+### 3.1 LLM passes (local, $0 API)
+| Stage | Passes | Out-tokens (est.) |
+|---|---|---|
+| Planner | 1 | 200–350 |
+| Tailor | 1 | 600–900 |
+| Verify (optional) | 0–1 | 150–300 |
+| **Total** | **2–3 (max 4)** | **~800–1,550 tokens/run** |
+
+Anthropic's own data: token usage explains **80% of performance variance** — but our task is *narrow and templatable*, so we do **not** need more tokens; we need **fewer, better-placed** ones. Contrast: a naive agentic memory/ReAct loop injects *all* context (e.g., 24 memories ≈ 594 prompt tokens) while a relevance-scoped injection uses ~5 memories ≈ 166 tokens — a **~72% prompt-token reduction** we capture by design (sqlite-vec top-K + RRF instead of context stuffing).
+
+### 3.2 Tavily credits (the ONLY cost surface)
+| Scenario | Math | Monthly credits |
+|---|---|---|
+| **Steady state (cache warm from $0 ATS/feed)** | long-tail only, ~0–2 basic searches/day | **~0–60** |
+| Moderate | 2 basic searches + 20 extracts/day → (2×1)+(20/5×1)=6/day | **~180** |
+| Upper bound (guarded) | 5 searches + 40 extracts/day | **~540** |
+| **Free tier** | — | **1,000/month** |
+
+➡ **Even the upper bound sits inside the free tier → $0/run, $0/month** for a single user. (Per credit: $0.008 basic search; Extract = 1 credit/5 URLs, ≤20 URLs/call.)
+
+### 3.3 Wall-clock (est., 7–8B Q4 model @ ~30–60 tok/s, mid-range workstation)
+| Phase | Time |
+|---|---|
+| Deterministic stages (profile, matcher, render) | **<1–2 s** |
+| LLM passes (Planner + Tailor + Verify) | **~25–55 s** |
+| Scout network (ATS/feed ~1–2 s each; Tavily 2–5 s if used) | **~2–15 s** |
+| **Total per run** | **~30–75 s** |
+
+### 3.4 Footprint (RAM / disk)
+| Component | RAM | Disk |
+|---|---|---|
+| Ollama chat model (7–8B Q4) | ~5–8 GB | ~5–8 GB |
+| Embedding model (nomic-embed-text / qwen3-0.6b) | ~300–600 MB | ~0.3–0.6 GB |
+| SQLite core (vector table) | **~50 MB @100K vec; ~200 MB @1M vec** (sqlite-vec) | **~6.0 GB per 1M vec**; a single user's 10K–50K corpus ≈ **tens of MB** |
+| Python app + libs | ~200–400 MB | small |
+| **System total** | **~6–9 GB RAM** | **~6–10 GB disk** |
+
+Note: sqlite-vec is the leanest of the embedded options (RSS 100K ≈ 50 MB vs LanceDB ≈ 120 MB vs Chroma ≈ 800 MB) — the right pick for a single-file, single-user core.
+
+---
+
+# PART 4 — PERSUASION BRIEF (for the Enterprise AI Architect boss)
+
+**The one recommendation:** *Build the Planner-Executor local agent on a single-file SQLite core with ATS/feed-primary, Tavily-fallback, deterministic Matcher — adopt the patterns of frameworks without their cost/dependency.*
+
+### Objection 1 — "Why not a full multi-agent framework / LangGraph / CrewAI?"
+
+**Answer: Framework *patterns* yes; framework *dependencies and token multiplier* no.**
+
+- **Evidence:** Anthropic's production multi-agent system beat single-agent by **90.2%** — but at **~15× the tokens** of chat (and agents alone are ~4×). Crucially, they state multi-agent **only wins when the task decomposes into independent, parallel threads**; and **token usage alone explained 80% of performance variance.** Our job-search task is a **sequential, single-context pipeline** where every stage shares *the same user profile* — exactly the case where "you pay the multiplier without earning the parallelism."
+- **Evidence:** In independent benchmark deployments, **LangGraph is the cheapest per task because explicit structure eliminates redundant LLM calls**; **CrewAI hierarchical mode costs ~30% more than sequential** (delegation overhead); **AutoGen without termination caps is 2× the cost with caps**; the same functional output ranged **2.7×** across frameworks ($63 vs $171/mo). Our Planner-Executor **is** explicit structure — *we get LangGraph's cost advantage without the framework's 3–7-day production surface.*
+- **Compromise that protects you:** we keep a thin **orchestration adapter seam** so LangGraph can be dropped in later for durable checkpointing/human-in-loop **without a rewrite.** We adopt the *good patterns* (plan-execute, scout isolation, verifier) which are framework-agnostic.
+
+### Objection 2 — "Why DIY SQLite instead of pgvector / Mem0 / Zep?"
+
+**Answer: For a single-user, single-workstation deployment, the serviced/black-box stacks add operational overhead and hidden LLM cost without buying capability we need.**
+
+- **pgvector/Postgres:** performant and ACID, *but* it is a **server we must run, size, tune, back up, and monitor** — "self-hosted Postgres adds the full operational burden." For **<100K vectors**, **sqlite-vec at ~50 MB RSS** is trivially sufficient, ACID, and **one portable file**. (Also, ORM support for pgvector remains incomplete in some tools — an integration tax.)
+- **Mem0 / Zep:** both run **LLM calls on the memory write path** (Mem0's two-phase extract→update; Zep's extraction per N messages) — reintroducing exactly the LLM-in-the-loop cost and cloud coupling we must avoid. Commercially: **Mem0 $19–$249/mo**, **Zep $25/mo+ with free tier deprecated (2026)**, and critically **Zep Community Edition was deprecated in 2025**. Building on them means inheriting their business-model and vendor risk — and Mem0 self-hosted keeps your memories "in a black box" (Qdrant vectors) you can't grep or edit.
+- **We adopt their best idea without the dependency:** relevance-scoped memory injection (top-K + RRF) instead of context stuffing → the measured **~72% prompt-token saving**.
+- **Not a dead end:** because we use **plain SQL**, the schema migrates to **Postgres+pgvector** unchanged if/when we exceed SQLite's comfort.
+
+### Objection 3 — "How do you guarantee API cost stays near zero over 12 months?"
+
+**Answer: It's an architectural guarantee, not a policy — with a swappable adapter and hard circuit breakers.**
+
+1. **Single cost surface:** Tavily is the only paid, web-touching component; everything else ($0 ATS APIs, Himalayas feed, local LLM/embeddings, local doc-gen) is free.
+2. **Four cost dampeners:** basic depth (1 credit) + batching (search=1 call; extract ≤20 URLs/call) + TTL caching + dedupe. **Realistic ~180 credits/mo vs 1,000 free → $0**, even at the guarded upper bound (~540) we stay inside the free tier.
+3. **Steady-state trend to zero:** once ATS + feed keep the cache warm, Tavily is touched only for the long tail.
+4. **Cost circuit breakers** (the production lesson from Anthropic): a monthly credit counter in the app; when the budget is hit, the Scout **serves cache and refuses paid calls** — it degrades, it never surprises.
+5. **Provider swappability:** Tavily sits behind a `SearchProvider` interface → if pricing/ToS changes, swap to Brave / Perplexity / self-hosted **SearXNG** with **zero pipeline changes**. Cost risk is *engineered out*, not wished away.
+
+### Objection 4 — "Is this maintainable/extensible when we scale to the whole enterprise?"
+
+**Answer: Yes — via clean seams, not premature infrastructure.**
+
+| Concern | Our seam | Enterprise path |
+|---|---|---|
+| More users | `tenant_id` on every table | Multi-tenant SQLite → **Postgres+pgvector** |
+| More vectors/concurrency | SQL-backed access layer | swap store behind same interface |
+| Durable orchestration | orchestration adapter | drop in **LangGraph** |
+| Model/provider change | `EmbeddingProvider`, `LLMProvider` interfaces | swap Ollama → hosted or larger local |
+| Quality regression | deterministic stages are **unit-testable with no LLM**; LLM stages use a golden set | CI regression harness |
+| Ops cost | **no memory server** | add only when metrics demand |
+
+**TCO argument:** we ship with **one process and one file**, no server fleet, no per-call memory vendor, and a bounded dependency surface — while retaining documented upgrade paths. That is *more* maintainable, not less, because there is less to operate.
+
+### Rejected-alternatives defense (by category) — summary
+
+| Category | **Chosen** | Rejected A | Rejected B | Decisive evidence |
+|---|---|---|---|---|
+| **Memory** | Single-file SQLite (kw+vec+graph) | pgvector/Postgres | Mem0/Zep | Server/ops overhead; LLM-on-write cost; Zep CE deprecated 2025 |
+| **Architecture** | Planner-Executor + Scout isolation | ReAct loop | Multi-agent pipeline | ReAct = Tavily thrash + context re-send; multi-agent = **15× tokens** without parallelism payoff |
+| **Tools** | ATS/feed primary, Tavily fallback | JobSpy scraper-heavy | Cloud job APIs | JobSpy = blocking + hidden proxy cost; cloud APIs = the very cloud/cost we're avoiding |
+
+---
+
+# PART 5 — ONE-SLIDE EXEC SUMMARY
+
+**JOBPILOT LOCAL — Zero-Cloud, Near-Zero-Cost Job Search Agent**
+
+- **What:** A personal job-search AI that runs **entirely on the workstation** (Ollama + one SQLite file), with **Tavily as the only possible cost** and ATS/feed APIs (free, keyless) as the primary source.
+- **How:** `Plan → Scout (isolated web) → Deterministic Match → Tailor → Verify → Render → Write-back`, cache-first throughout.
+- **Budget (per run):** **2–3 local LLM passes (~1.5K tok)**, **0–2 Tavily credits**, **~30–75 s**, **~6–9 GB RAM**, **~50 MB–6 GB disk scale.** **Steady-state monthly: ~180 / 1,000 free credits → $0.**
+- **Why this, not frameworks:** Anthropic's multi-agent gains cost **~15× tokens** and only pay off under *parallel, independent* threads — job-search is sequential and single-context. We adopt the **patterns** (plan-execute, scout isolation, verifier), not the **multiplier**.
+- **Why this memory:** **sqlite-vec ~50 MB @100K vectors**, ACID, **one portable file**; no server, no per-call vendor (Mem0/Zep add LLM-on-write cost + vendor risk; Zep CE deprecated 2025; pgvector adds ops burden).
+- **Cost control is architectural:** single cost surface + batching + TTL cache + dedupe + **credit circuit breakers** + **swappable search provider** → cost risk engineered out.
+- **Scale path:** same interfaces migrate to Postgres+pgvector and LangGraph when metrics demand — **no rewrite**.
+
+**Ask:** Approve a 2-week spike to validate the Planner-Executor on your hardware (measure real LLM passes, Tavily hit-rate, and latency against this budget).
+
+---
+
+**Carry-forward risks (unchanged from prior deliverables):** (i) confirm your local model reliably emits structured plans; (ii) confirm SQLite edge-table vs Graphiti/FalkorDB-lite before memory freeze; (iii) re-verify Tavily free-tier terms and ATS board-token coverage at implementation time (both are live facts).
+
+Next request.
+[34mChief Solution Architect:
+
+<CAMEL_TASK_DONE>
+[32mEnterprise AI Architect:
+
+Acknowledged — the task is complete.
+
+**Deliverables catalogued across the five instructions:**
+
+1. **Memory systems** — Compared vector stores (sqlite-vec, LanceDB, Chroma, FAISS, Qdrant, Milvus), embedded/graph memory (Graphiti/FalkorDB, Kuzu, Memgraph, Neo4j, DIY edge table), and structured profile memory (SQLite, DuckDB, memweave, pgvector, Mem0/Letta/Zep) on architecture, footprint, retrieval cost, and offline capability.
+2. **Agent architectures** — Scored ReAct loop (21), Planner-Executor (29), and multi-agent pipeline (26) on latency, debuggability, offline resilience, and API minimization.
+3. **Tool layer** — Tavily credits/pricing/tiers, job-data alternatives (JobSpy vs. keyless ATS APIs vs. feeds), and local utilities, with a recommended tool stack.
+4. **End-to-end workflow** — Stage-by-stage pipeline mapped to frozen memory/architecture/tool decisions, plus a quantified per-run budget.
+5. **Persuasion brief** — Evidence-backed defenses against the boss's four objections, rejection rationale for the two alternatives in each category, and a one-slide exec summary.
+
+**Frozen recommendation:** *JobPilot Local* — Planner-Executor core with Scout-isolated, cache-first web access; single-file SQLite (relational + FTS5 + sqlite-vec hybrid RRF + graph edge table); ATS/feed primary, Tavily fallback; steady-state ~180/1,000 free credits → **$0/run**; ~2–3 local LLM passes; ~6–9 GB RAM.
+
+**Open validations before implementation:** (i) local model emits reliable structured plans; (ii) SQLite edge table vs Graphiti/FalkorDB-lite; (iii) re-verify Tavily free-tier terms and ATS board-token coverage (both live facts).
+
+Standing by if you'd like to reopen any thread, move to the 2-week spike plan, or draft the exec-slide in a shareable format.
+[35mTask completed
+[33mThere is in total 5 turn(s) of communication
