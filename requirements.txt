@@ -1,0 +1,17 @@
+# Core runtime
+python-dotenv>=1.0.0
+requests>=2.31.0
+pydantic>=2.5.0
+numpy>=1.26.0
+
+# Storage backends
+qdrant-client>=1.6.0
+neo4j>=5.14.0
+
+# Parsing
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# Optional: Chinese + English spaCy models for the reference NER pipeline.
+# Not required - entity extraction degrades gracefully when absent.
+# spacy>=3.7.0
